@@ -3,6 +3,8 @@
 > 카메라로 한국 수어 지문자(자음·모음)를 인식해 한글 문장으로 변환하는 시스템
 > Python(MediaPipe + RandomForest) ↔ C# WinForms HMI · TCP 통신
 
+# 시연 영상 : https://youtu.be/fkGpEznZuDA
+
 ---
 
 ## 프로젝트 소개
