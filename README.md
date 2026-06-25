@@ -1,59 +1,65 @@
-#  한글 지문자 실시간 입력 시스템
+#  청각장애인을 위한 화상통화 입력 시스템
 
-> 카메라로 한국 수어 지문자(자음·모음)를 인식해 한글 문장으로 변환하는 시스템
-> Python(MediaPipe + RandomForest) ↔ C# WinForms HMI · TCP 통신
+> 한쪽은 수화 손동작을, 다른 쪽은 음성을 — 양쪽 모두 텍스트로 변환해 실시간으로 주고받는 양방향 화상통화 시스템
+> Python(MediaPipe + RandomForest) ↔ C# WinForms · TCP 통신
 
-# 시연 영상 : https://youtu.be/fkGpEznZuDA
+ **시연 영상**: https://youtu.be/fkGpEznZuDA
 
 ---
 
 ## 프로젝트 소개
 
-손동작으로 화면에 글자가 한 글자씩 쌓이는 모습을 직접 만들어보고 싶었습니다. 그래서 카메라로 한국 수어 지문자를 인식해 한글로 변환하고, 인식 엔진과 화면을 다른 PC에서 돌릴 수 있도록 둘로 나눠 TCP로 묶었습니다.
+청각장애인과 비청각장애인이 함께 화상통화를 할 수 있도록 만든 양방향 텍스트 변환 시스템입니다. 한쪽 PC에서는 카메라로 **수화 손동작을 인식해 한글 자모로 변환**하고, 다른 쪽 PC에서는 **음성을 텍스트로 변환**해서, 양쪽 모두 상대편 화면에 텍스트로 표시됩니다. 둘 사이엔 TCP로 연결된 텍스트 채널만 있고, 입력 방식만 서로 다른 구조입니다.
 
-Python 쪽은 MediaPipe로 손 관절 21개를 뽑아 RandomForest로 자음·모음을 분류하고, C# WinForms 쪽은 그 결과를 받아 화면에 글자로 누적합니다. 인식 자체뿐 아니라 "어떻게 잘못 누른 글자를 지우고, 어떻게 띄어쓰기 하고, 어떻게 확정할지"까지 손동작만으로 끝낼 수 있도록 두 손 제스처 명령을 별도로 설계했습니다.
+2인 팀 프로젝트로, 저는 **수화 인식 머신러닝 학습 + 수화 송신측 Python + 본인 쪽 WinForms 수신 서버 + TCP/IP 통신 구조 설계**를 담당했습니다. 팀원은 반대쪽 PC에서 음성을 텍스트로 변환해 보내는 송신측과, 본인이 보낸 수화 텍스트를 받는 팀원 쪽 WinForms 서버를 담당했습니다.
 
-[사진: 인식 화면 + WinForms 결과 화면을 나란히 찍은 한 컷]
+<img width="1068" height="359" alt="image" src="https://github.com/user-attachments/assets/970a6986-6da0-417d-8c21-5b72a42b074b" />
 
 ---
 
-## 시스템 구성도
+## 양방향 구조 — 누가 뭘 만들었나
 
 ```
-[ 송신 PC — Python 인식 엔진 ]
-   카메라 입력 (OpenCV)
-        │ 좌우 반전
-        ▼
-   MediaPipe Hands  →  손 21개 관절 좌표 추출
-        │
-        ▼
-   RandomForest 분류기 (model.pkl, 31 클래스)
-        │ char + confidence
-        ▼
-   Hold 필터 (신뢰도 0.65 기준 1.0s / 2.0s 이중 필터)
-        │ 확정된 글자
-        ▼
-   TCP 송신 (UTF-8, '\n' 종단)
-        │  CHAR: / CMD: / VOICE:
-        │
-        │     ※ 두 손 제스처 → 별도 CMD: 송신 경로
-        │     ※ 확정 직후 Windows SAPI TTS 로 발음
-        │
-        ▼
-[ 수신 PC — C# WinForms HMI ]
-   TcpListener (포트 9000)
-        │ 패킷 파싱 (CHAR / CMD: DELETE/SPACE/CLEAR / VOICE)
-        ▼
-   결과 표시창 · 수신 로그 · 연결 상태
+   [ PC A — 본인 ]                              [ PC B — 팀원 ]
+   ┌─────────────────────────┐                 ┌─────────────────────────┐
+   │ ✅ 수화 송신측 (Python)  │                 │   음성 송신측 (팀원)     │
+   │   카메라 + MediaPipe     │                 │   STT → 텍스트 변환     │
+   │   + ML 분류 + Hold 필터  │                 │                          │
+   └────────────┬────────────┘                 └────────────┬────────────┘
+                │                                            │
+                │  TCP (수화 텍스트)                          │  TCP (음성 텍스트)
+                │                                            │
+                ▼                                            ▼
+   ┌─────────────────────────┐                 ┌─────────────────────────┐
+   │   수화 수신측 (팀원)     │                 │ ✅ 음성 수신측 (C# WinForms)│
+   │   WinForms 서버         │                 │   TcpListener:9000      │
+   │   본인 수화를 글자로 표시│                 │   팀원 음성을 글자로 표시│
+   └─────────────────────────┘                 └─────────────────────────┘
 ```
 
-[사진: 시스템 구성도 (직접 그린 그림 또는 위 다이어그램 캡처)]
+| PC | 송신측 | 수신측 |
+|----|--------|--------|
+| **PC A (본인)** | ✅ 수화 → 텍스트 (Python) | ✅ 음성 텍스트 받음 (C# WinForms) |
+| PC B (팀원) | 음성 → 텍스트 (팀원) | 수화 텍스트 받음 (팀원 WinForms) |
+
+> 양쪽이 데칼코마니처럼 송수신 쌍을 이루는 구조입니다. 본인은 **PC A 쪽 송신+수신 양쪽**을 모두 담당했고, 팀원은 **PC B 쪽 송신+수신 양쪽**을 담당했습니다.
+
+---
+
+## 본인 담당 (4영역)
+
+| # | 영역 | 내용 |
+|---|------|------|
+| 1 |  **수화 인식 머신러닝** | 자모별 학습 데이터 수집(300→500개) · RandomForest 모델 학습 |
+| 2 |  **수화 송신측 (Python)** | MediaPipe 손 인식, Hold 필터, 두 손 제스처 명령, TTS, TCP 송신 |
+| 3 |  **음성 수신 WinForms** | TCP 서버 + 팀원이 보낸 음성 텍스트 누적 표시 + 로그·연결 상태 |
+| 4 |  **TCP/IP 통신 구조** | 양방향 송수신 패킷 프로토콜 설계 |
 
 ---
 
 ## 주요 기능
 
-###  한 손 = 지문자 인식 모드
+###  수화 — 한 손 = 지문자 인식 모드
 
 자음 14개와 모음 17개, 총 **31개 클래스**를 RandomForest로 분류합니다.
 
@@ -70,11 +76,11 @@ MediaPipe로 추출한 손 관절 21개의 `(x, y, z)` 좌표 63차원을 그대
 | 70% 이상 | 🟡 노랑 |
 | 70% 미만 | 🔴 빨강 |
 
-[사진: 인식 모드 — 손 + 인식된 글자 + 신뢰도 % 화면]
+<img width="871" height="676" alt="image" src="https://github.com/user-attachments/assets/8bef7719-6d42-4b90-9193-e9c083b384df" />
 
 ---
 
-### ⏱ 두 단계 Hold 필터
+###  두 단계 Hold 필터
 
 손이 떨려서 잘못 확정되는 걸 막기 위해, 같은 글자를 일정 시간 유지해야 확정되도록 Hold 필터를 적용했습니다. 단순히 시간을 길게 잡으면 인식이 답답해지므로, **신뢰도가 높을 때는 빠르게, 낮을 때는 느리게** 확정되도록 두 개의 필터를 동시에 두고 신뢰도에 따라 활성 필터를 전환합니다.
 
@@ -85,7 +91,7 @@ MediaPipe로 추출한 손 관절 21개의 `(x, y, z)` 좌표 63차원을 그대
 
 확정 진행률은 화면 우측 상단의 게이지 바로 시각화하고, 확정 직후 Hold 상태가 자동 리셋되어 같은 글자를 연속으로 입력할 수 있습니다.
 
-[사진: 신뢰도가 높을 때 빠르게 차오르는 게이지 vs 낮을 때 느린 게이지 비교 캡처]
+<img width="136" height="112" alt="image" src="https://github.com/user-attachments/assets/cb0afc97-1f4a-486f-a90e-0f4d94b88bf7" />
 
 ---
 
@@ -102,45 +108,39 @@ MediaPipe로 추출한 손 관절 21개의 `(x, y, z)` 좌표 63차원을 그대
 
 좌우 손 판별은 별도 라이브러리 없이 엄지(4번)와 새끼손가락 뿌리(17번) 관절의 x좌표 비교로 처리했습니다. 카메라가 좌우 반전된 상태이므로 엄지가 새끼손가락 뿌리보다 오른쪽에 있으면 오른손, 반대면 왼손입니다.
 
-[사진: 양손 펴기로 삭제되는 순간 / 오른손 엄지업으로 전송하는 순간]
+<img width="874" height="615" alt="image" src="https://github.com/user-attachments/assets/bc07d30f-b4de-45ac-b75f-cf9a41309b74" />
 
 ---
 
 ###  TTS 음성 출력
 
-확정된 글자를 Windows 내장 음성합성기(SAPI)로 즉시 발음합니다. PowerShell의 `System.Speech.Synthesis.SpeechSynthesizer`를 별도 스레드 + 큐로 실행해 인식 루프가 끊기지 않게 처리했습니다. 큐가 비어있을 때만 새 발음을 넣어 같은 글자가 겹쳐 발음되는 것도 막았습니다.
+확정된 수화 글자를 본인 PC에서도 Windows 내장 음성합성기(SAPI)로 즉시 발음합니다. 본인이 수화로 보낸 내용을 음성으로도 확인할 수 있도록 한 보조 기능입니다. PowerShell의 `System.Speech.Synthesis.SpeechSynthesizer`를 별도 스레드 + 큐로 실행해 인식 루프가 끊기지 않게 처리했습니다. 큐가 비어있을 때만 새 발음을 넣어 같은 글자가 겹쳐 발음되는 것도 막았습니다.
 
 ---
 
-###  음성 인식 보조 입력 (voice_sender.py)
+###  음성 수신 WinForms 서버 (본인 쪽)
 
-손이 불편하거나 모르는 글자가 있을 때를 위해 음성 인식을 보조 입력으로 추가했습니다. Google Speech Recognition으로 한국어 음성을 텍스트로 받은 뒤, **한 글자씩 분해해 `VOICE:` 패킷으로 전송**합니다. 수신 측 C# WinForms는 `CHAR:`와 동일하게 화면에 누적해 표시합니다.
-
----
-
-###  C# WinForms HMI (수신 측)
-
-`TcpListener`로 포트 9000을 열어 Python 측 연결을 받고, 들어오는 패킷을 `\n` 단위로 잘라 처리합니다. TCP 특성상 한 번에 잘려서 들어오거나 합쳐서 들어올 수 있어서, **leftover 버퍼로 마지막 미완성 라인을 다음 수신과 합치는 처리**를 넣었습니다.
+팀원 PC에서 음성 → 텍스트로 변환된 결과를 받아 화면에 표시하는 서버입니다. `TcpListener`로 포트 9000을 열어 팀원 측 연결을 받고, 들어오는 패킷을 `\n` 단위로 잘라 처리합니다. TCP 특성상 한 번에 잘려서 들어오거나 합쳐서 들어올 수 있어서, **leftover 버퍼로 마지막 미완성 라인을 다음 수신과 합치는 처리**를 넣었습니다.
 
 화면 구성:
-- 결과 표시창 — 누적된 한글 문장
+- 결과 표시창 — 팀원이 보낸 음성을 텍스트로 누적
 - 수신 로그 리스트 — 시각 + 받은 패킷
 - 연결 상태 표시 — 대기/연결 중/연결됨 색상 라벨
 - 실시간 시계
 - 포트 입력 + 연결/해제 버튼
 
-[사진: WinForms HMI 화면 — 결과 표시 + 로그 + 상태]
+<img width="692" height="580" alt="image" src="https://github.com/user-attachments/assets/f3f9edc6-0453-4606-8020-917e25adafc2" />
+
 
 ---
 
 ## 통신 프로토콜
 
-UTF-8 텍스트, 패킷 종단은 `\n`. C# 수신측은 `Split('\n')` + leftover 버퍼 방식으로 패킷을 잘라냅니다.
+UTF-8 텍스트, 패킷 종단은 `\n`. 수신측은 `Split('\n')` + leftover 버퍼 방식으로 패킷을 잘라냅니다. 양방향 모두 동일한 포맷을 사용합니다.
 
 | 패킷 | 송신 측 | 의미 |
 |------|---------|------|
-| `{글자}\n` | Hold 필터 확정 | 지문자 입력 (※ 코드상 `CHAR:` 접두어 없이 글자만 전송됨) |
-| `VOICE:{글자}\n` | 음성 인식 | 음성으로 입력된 글자 |
+| `{글자}\n` | Hold 필터 확정 (수화) | 지문자 입력 (※ 코드상 `CHAR:` 접두어 없이 글자만 전송됨) |
 | `CMD:DELETE\n` | 양손 펴기 | 마지막 글자 삭제 |
 | `CMD:SPACE\n` | 왼손 엄지업 | 띄어쓰기 |
 | `CMD:CONFIRM\n` | 오른손 엄지업 | 확정/전송 |
@@ -156,9 +156,8 @@ UTF-8 텍스트, 패킷 종단은 `\n`. C# 수신측은 `Split('\n')` + leftover
 | 분류 모델 | scikit-learn RandomForest (n_estimators=100) |
 | 한글 출력 | Pillow (malgun.ttf), OpenCV |
 | TTS | Windows SAPI (PowerShell) |
-| 음성 인식 | speech_recognition (Google STT), PyAudio |
-| HMI | C# / .NET WinForms (TcpListener) |
-| 통신 | TCP Socket, UTF-8, `\n` 종단 |
+| 수신 화면 | C# / .NET WinForms (TcpListener) |
+| 통신 | TCP Socket, UTF-8, `\n` 종단, 양방향 송수신 |
 
 ---
 
@@ -166,27 +165,26 @@ UTF-8 텍스트, 패킷 종단은 `\n`. C# 수신측은 `Split('\n')` + leftover
 
 ```
 .
-├── python/                 # 송신 측 (인식 엔진)
+├── python/                 # ✅ 본인 — 수화 송신측
 │   ├── hand_tracker.py     # 메인 (카메라·MediaPipe·제스처·TTS·송신)
 │   ├── classifier.py       # ML 분류 (model.pkl 로드)
 │   ├── hold_filter.py      # Hold 확정 로직
 │   ├── sender.py           # TCP 클라이언트 송신
-│   ├── voice_sender.py     # 음성 인식 → 송신
 │   ├── collect.py          # 학습 데이터 수집 (CSV 적재)
 │   ├── train.py            # RandomForest 학습 → model.pkl
 │   ├── tts_test.py         # SAPI TTS 테스트
 │   ├── data.csv            # 수집된 학습 데이터 (label + 21*3 좌표)
 │   └── model.pkl           # 학습된 모델
 │
-└── winforms/               # 수신 측 (HMI) ※ 팀원 담당
-    ├── Form1.cs            # TCP 서버 + 화면 표시
+└── winforms/               # ✅ 본인 — 음성 수신 WinForms 서버
+    ├── Form1.cs            # TCP 서버 + 팀원 음성 텍스트 표시
     ├── Form1.Designer.cs
     ├── Form1.resx
     ├── Program.cs
     └── WinFormsApp1.csproj
 ```
 
-> 본 저장소에는 송신 측(Python) 코드가 메인으로 포함되어 있습니다. 수신 측 WinForms 일부 파일이 함께 들어 있지만, 핵심 UI는 팀원이 담당했습니다.
+> 반대 방향(팀원의 음성 송신측 + 본인 수화를 받는 팀원 WinForms 서버)은 팀원이 별도 저장소에서 관리합니다.
 
 ---
 
@@ -195,7 +193,7 @@ UTF-8 텍스트, 패킷 종단은 `\n`. C# 수신측은 `Split('\n')` + leftover
 ### 1. 라이브러리 설치
 
 ```bash
-pip install opencv-python mediapipe scikit-learn pandas pillow numpy pywin32 SpeechRecognition pyaudio
+pip install opencv-python mediapipe scikit-learn pandas pillow numpy pywin32
 ```
 
 ### 2. 모델 준비
@@ -209,22 +207,22 @@ python train.py       # RandomForest 학습 → model.pkl 생성
 
 ### 3. 실행 순서
 
-1. **수신 PC**: C# WinForms 프로그램 실행 → "연결" 버튼으로 포트 9000 대기
-2. **송신 PC**: `hand_tracker.py`의 `Sender(host=..., port=9000)` IP를 수신 PC의 IPv4 주소로 수정 후 실행
+**본인 PC**
+1. WinForms 서버 실행 → "연결" 버튼으로 포트 9000 대기 (팀원 음성 텍스트 수신용)
+2. `hand_tracker.py`의 `Sender(host=..., port=9000)` IP를 **팀원 PC** IPv4로 수정 후 실행 (수화 송신)
 
 ```python
-sender = Sender(host="수신_PC_IPv4_주소", port=9000)
+sender = Sender(host="팀원_PC_IPv4_주소", port=9000)
 ```
 
-3. (선택) 음성 인식 보조 입력 실행:
-```bash
-python voice_sender.py
-```
+**팀원 PC**
+1. 팀원 WinForms 서버 실행 → 포트 9000 대기 (본인 수화 수신용)
+2. 음성 송신 프로그램의 송신 대상 IP를 **본인 PC** IPv4로 설정 후 실행
 
 ### 같은 네트워크 설정
 
 - 두 PC가 같은 Wi-Fi/핫스팟에 연결되어 있어야 합니다.
-- 수신 PC 방화벽에서 TCP 9000 인바운드 허용:
+- 양쪽 PC 방화벽에서 TCP 9000 인바운드 허용:
 
 ```bash
 netsh advfirewall firewall add rule name="WinForms" dir=in action=allow protocol=TCP localport=9000
@@ -232,16 +230,16 @@ netsh advfirewall firewall add rule name="WinForms" dir=in action=allow protocol
 
 ---
 
-##  팀 구성
+##  팀 구성 (2인)
 
-| 담당 | 역할 |
+| 담당 | 영역 |
 |------|------|
-| 박은수 (Python 인식 엔진) | 카메라·MediaPipe 손 인식, 학습 데이터 수집·모델 학습, Hold 필터, 두 손 제스처 명령, TTS, 음성 인식 보조 입력, TCP 송신 |
-| 팀원 (C# WinForms HMI) | TCP 서버, 패킷 파싱, 한글 누적 표시, 로그·상태 관리, UI 구성 |
+| **박은수 (본인)** | 수화 인식 머신러닝 학습 / Python 수화 송신측 (MediaPipe·Hold 필터·제스처·TTS) / 본인 쪽 C# WinForms 수신 서버 (팀원 음성 텍스트 수신) / 양방향 TCP/IP 통신 구조 설계 |
+| 팀원 1명 | 음성 → 텍스트 변환 송신측 / 본인 수화를 받는 팀원 쪽 WinForms 수신 서버 |
 
 ---
 
-## ⚠ 한계 및 개선 방향
+##  한계 및 개선 방향
 
 **Hold 필터의 진행률 상한**
 `get_progress()`가 `min(elapsed/hold_time, 2.0)`으로 잘려 있어 진행률이 1.0을 넘어 2.0까지 갈 수 있습니다. 게이지 바 시각화 의도와 맞지 않으므로 상한을 1.0으로 수정해야 합니다.
@@ -250,13 +248,13 @@ netsh advfirewall firewall add rule name="WinForms" dir=in action=allow protocol
 수신측은 `CHAR:` 접두어를 파싱할 수 있지만, 실제 송신측(`hand_tracker.py`)은 확정 글자를 접두어 없이 그대로 보냅니다. 송신/수신 양쪽 모두에서 동작은 하지만 프로토콜 일관성 차원에서 `CHAR:` 접두어로 통일하는 것이 안전합니다.
 
 **모음 인식 난이도**
-모음(특히 ㅜ·ㅗ·ㅡ 등)은 손 모양 차이가 작아 인식률이 자음보다 낮습니다. `collect.py`의 `LABELS`가 "문제 있는 글자만 집중 수집"용으로 사용된 흔적이 그 결과입니다. 좌표 정규화(손 크기·위치 보정)나 시계열 모델(LSTM) 도입으로 개선할 여지가 있습니다.
+모음(특히 ㅜ·ㅗ·ㅡ 등)은 손 모양 차이가 작아 인식률이 자음보다 낮습니다. 자모별 학습 데이터를 300개에서 500개로 늘려 다양한 손 각도·거리 조건을 학습시킨 결과 안정성은 크게 개선됐지만, 좌표 정규화(손 크기·위치 보정)나 시계열 모델(LSTM) 도입으로 추가 개선할 여지가 있습니다.
 
 **데이터 인코딩**
 `data.csv`를 `cp949`로 저장하고 있어 다른 환경에서 깨질 수 있습니다. UTF-8로 통일하는 것이 안전합니다.
 
 **TCP 단일 클라이언트 가정**
-수신측 `Form1.cs`는 사실상 한 클라이언트 연결만 처리하는 구조입니다. 다중 송신 PC를 지원하려면 클라이언트 관리·식별이 필요합니다.
+현재 WinForms는 사실상 한 클라이언트 연결만 처리하는 구조입니다. 다중 송신 PC를 지원하려면 클라이언트 관리·식별이 필요합니다.
 
 **음절 조합 미지원**
 현재는 자모 단위로만 화면에 누적됩니다(ㅎ ㅏ ㄴ ㄱ ㅡ ㄹ → "ㅎㅏㄴㄱㅡㄹ"). 자모를 음절로 조합("한글")해주는 후처리가 들어가면 가독성이 크게 개선됩니다.
